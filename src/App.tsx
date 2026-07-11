@@ -57,6 +57,17 @@ import {
   Check,
 } from "lucide-react";
 
+// Snapshot / Point-in-time Restore point data structure
+export interface Snapshot {
+  id: string;
+  timestamp: string;
+  description: string;
+  tasksCount: number;
+  usersCount: number;
+  tasks: Task[];
+  users: UserProfile[];
+}
+
 // LocalStorage Keys
 const LOCAL_USERS_KEY = "tasktracker_local_users_v2";
 const LOCAL_TASKS_KEY = "tasktracker_local_tasks_v2";
@@ -123,6 +134,118 @@ export default function App() {
   const [showSheetsGuide, setShowSheetsGuide] = useState(false);
   const [showScriptGuide, setShowScriptGuide] = useState(false);
   const [isCopied, setIsCopied] = useState(false);
+
+  // Local Snapshot & Backup states
+  const [snapshots, setSnapshots] = useState<Snapshot[]>(() => {
+    const saved = localStorage.getItem("tasktracker_backup_snapshots_v1");
+    return saved ? JSON.parse(saved) : [];
+  });
+  const [manualBackupTitle, setManualBackupTitle] = useState("");
+  const [confirmRestoreSnapshot, setConfirmRestoreSnapshot] = useState<Snapshot | null>(null);
+  const [showRestoreModal, setShowRestoreModal] = useState(false);
+
+  const createSnapshot = (description: string, customTasks?: Task[], customUsers?: UserProfile[]) => {
+    try {
+      const tList = customTasks || JSON.parse(localStorage.getItem(LOCAL_TASKS_KEY) || "[]");
+      const uList = customUsers || JSON.parse(localStorage.getItem(LOCAL_USERS_KEY) || "[]");
+      
+      const newSnapshot: Snapshot = {
+        id: "snap_" + Date.now() + "_" + Math.random().toString(36).substring(2, 6),
+        timestamp: new Date().toLocaleString("vi-VN"),
+        description,
+        tasksCount: tList.length,
+        usersCount: uList.length,
+        tasks: tList,
+        users: uList
+      };
+      
+      setSnapshots((prev) => {
+        const updated = [newSnapshot, ...prev].slice(0, 10); // Keep last 10 snapshots
+        localStorage.setItem("tasktracker_backup_snapshots_v1", JSON.stringify(updated));
+        return updated;
+      });
+      
+      addSyncLog(`[Hệ thống sao lưu] Đã tạo điểm khôi phục tự động: "${description}"`);
+    } catch (err: any) {
+      console.error("Lỗi khi tự động tạo bản sao lưu:", err);
+    }
+  };
+
+  const handleExportTasksCSV = () => {
+    try {
+      const headers = [
+        "ID",
+        "Tiêu đề",
+        "Mô tả",
+        "Ngày bắt đầu",
+        "Hạn chót",
+        "Trạng thái",
+        "Tiến độ (%)",
+        "Độ ưu tiên",
+        "Người chịu trách nhiệm",
+        "Email người chịu trách nhiệm",
+        "Người kiểm duyệt",
+        "Phòng ban",
+        "Ngày tạo",
+        "Cập nhật lúc"
+      ];
+      
+      const rows = tasks.map((t) => [
+        t.id || "",
+        t.title || "",
+        (t.description || "").replace(/\r?\n/g, " "),
+        t.startDate || "",
+        t.dueDate || "",
+        t.status || "",
+        t.progress || 0,
+        t.priority || "",
+        t.assignee || "",
+        t.assigneeEmail || "",
+        t.reviewer || "",
+        t.department || "",
+        t.createdAt || "",
+        t.updatedAt || ""
+      ]);
+
+      const csvContent = "\uFEFF" + headers.join(",") + "\n" + rows.map(e => e.map(val => `"${String(val).replace(/"/g, '""')}"`).join(",")).join("\n");
+      const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `Danh_Sach_Nhiem_Vu_${new Date().toISOString().slice(0, 10)}.csv`;
+      link.click();
+      URL.revokeObjectURL(url);
+      addSyncLog("Đã xuất danh sách nhiệm vụ thành file CSV thành công.");
+    } catch (err: any) {
+      addSyncLog(`Lỗi xuất CSV nhiệm vụ: ${err.message}`);
+    }
+  };
+
+  const handleExportUsersCSV = () => {
+    try {
+      const headers = ["Họ và tên", "Email", "Vai trò", "Phòng ban", "Ngày tạo"];
+      const rows = usersList.map((u) => [
+        u.name || "",
+        u.email || "",
+        u.role || "",
+        u.department || "",
+        u.createdAt || ""
+      ]);
+
+      const csvContent = "\uFEFF" + headers.join(",") + "\n" + rows.map(e => e.map(val => `"${String(val).replace(/"/g, '""')}"`).join(",")).join("\n");
+      const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `Danh_Sach_Nhan_Su_${new Date().toISOString().slice(0, 10)}.csv`;
+      link.click();
+      URL.revokeObjectURL(url);
+      addSyncLog("Đã xuất danh sách nhân viên thành file CSV thành công.");
+    } catch (err: any) {
+      addSyncLog(`Lỗi xuất CSV nhân sự: ${err.message}`);
+    }
+  };
+
   const [syncMethod, setSyncMethod] = useState<"oauth" | "appscript">(() => {
     return (localStorage.getItem("admin_sync_method") as "oauth" | "appscript") || "appscript";
   });
@@ -725,6 +848,9 @@ export default function App() {
 
   // Pull tasks and users from Google Sheets and overwrite local storage (Admin only)
   const handlePullFromGoogleSheets = async () => {
+    // Tự động tạo điểm khôi phục dự phòng trước khi nạp dữ liệu từ xa
+    createSnapshot("Trước khi tải dữ liệu về từ Google Sheets");
+
     if (syncMethod === "appscript") {
       if (!webAppUrl) {
         setSyncStatusMsg("Vui lòng cấu hình URL Google Apps Script Web App trước.");
@@ -1009,6 +1135,9 @@ export default function App() {
     const file = e.target.files?.[0];
     if (!file) return;
 
+    // Tự động tạo điểm khôi phục dự phòng trước khi nhập file
+    createSnapshot("Trước khi nhập dữ liệu từ file sao lưu JSON");
+
     const reader = new FileReader();
     reader.onload = (event) => {
       try {
@@ -1040,6 +1169,7 @@ export default function App() {
   const handleSaveTask = async (task: Task) => {
     const currentTasks: Task[] = JSON.parse(localStorage.getItem(LOCAL_TASKS_KEY) || "[]");
     const index = currentTasks.findIndex((t) => t.id === task.id);
+    const isNew = index < 0;
 
     if (index >= 0) {
       currentTasks[index] = task;
@@ -1049,6 +1179,9 @@ export default function App() {
 
     localStorage.setItem(LOCAL_TASKS_KEY, JSON.stringify(currentTasks));
     setTasks(currentTasks);
+
+    // Tự động sao lưu lịch sử cục bộ sau khi lưu công việc
+    createSnapshot(isNew ? `Thêm mới nhiệm vụ: "${task.title}"` : `Cập nhật nhiệm vụ: "${task.title}"`, currentTasks);
 
     // If active user is Admin and Google Sync is active, auto-backup in background to keep sheets hot!
     if (autoSyncEnabled && (syncScope === "all" || syncScope === "tasks") && profile?.role === "admin") {
@@ -1080,10 +1213,14 @@ export default function App() {
 
   const handleDeleteTask = async (taskId: string) => {
     const currentTasks: Task[] = JSON.parse(localStorage.getItem(LOCAL_TASKS_KEY) || "[]");
+    const targetTask = currentTasks.find((t) => t.id === taskId);
     const filtered = currentTasks.filter((t) => t.id !== taskId);
 
     localStorage.setItem(LOCAL_TASKS_KEY, JSON.stringify(filtered));
     setTasks(filtered);
+
+    // Tự động sao lưu lịch sử cục bộ sau khi xóa công việc
+    createSnapshot(`Xóa nhiệm vụ: "${targetTask?.title || taskId}"`, filtered);
 
     // Backup to sheet if admin is synced
     if (autoSyncEnabled && (syncScope === "all" || syncScope === "tasks") && profile?.role === "admin") {
@@ -1117,6 +1254,7 @@ export default function App() {
     const currentUsers: UserProfile[] = JSON.parse(localStorage.getItem(LOCAL_USERS_KEY) || "[]");
     const searchEmail = originalEmail || updatedProfile.email;
     const index = currentUsers.findIndex((u) => u.email.toLowerCase() === searchEmail.toLowerCase());
+    const isNew = index < 0;
 
     if (index >= 0) {
       currentUsers[index] = updatedProfile;
@@ -1126,6 +1264,9 @@ export default function App() {
 
     localStorage.setItem(LOCAL_USERS_KEY, JSON.stringify(currentUsers));
     setUsersList(currentUsers);
+
+    // Tự động sao lưu lịch sử cục bộ sau khi lưu tài khoản nhân sự
+    createSnapshot(isNew ? `Thêm mới nhân sự: "${updatedProfile.name}"` : `Cập nhật nhân sự: "${updatedProfile.name}"`, undefined, currentUsers);
 
     // Update active profile if self was updated
     if (profile && profile.email.toLowerCase() === searchEmail.toLowerCase()) {
@@ -1175,10 +1316,14 @@ export default function App() {
 
   const handleDeleteUserProfile = async (email: string) => {
     const currentUsers: UserProfile[] = JSON.parse(localStorage.getItem(LOCAL_USERS_KEY) || "[]");
+    const targetUser = currentUsers.find((u) => u.email.toLowerCase() === email.toLowerCase());
     const filteredUsers = currentUsers.filter((u) => u.email.toLowerCase() !== email.toLowerCase());
 
     localStorage.setItem(LOCAL_USERS_KEY, JSON.stringify(filteredUsers));
     setUsersList(filteredUsers);
+
+    // Tự động sao lưu lịch sử cục bộ sau khi xóa nhân sự
+    createSnapshot(`Xóa nhân sự: "${targetUser?.name || email}"`, undefined, filteredUsers);
 
     // If deleting current logged-in profile, sign them out
     if (profile && profile.email.toLowerCase() === email.toLowerCase()) {
@@ -2839,6 +2984,199 @@ function doGet(e) {
             </div>
           )}
 
+          {/* CENTRAL LOCAL BACKUP & RESTORE MANAGEMENT PORTAL */}
+          {activeProfile?.role === "admin" && (
+            <div className="bg-white rounded-2xl border border-indigo-100 shadow-sm p-5 mb-6">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4 mb-4">
+                <div>
+                  <h3 className="font-bold text-slate-800 text-xs uppercase tracking-wider flex items-center gap-2">
+                    <Database className="w-4 h-4 text-indigo-600 shrink-0" />
+                    TRUNG TÂM SAO LƯU & AN TOÀN DỮ LIỆU HỆ THỐNG
+                  </h3>
+                  <p className="text-[11px] text-slate-500 mt-0.5">
+                    Quản lý lịch sử sao lưu dự phòng cục bộ, phục hồi hệ thống tức thì khi xảy ra sự cố mất mát dữ liệu.
+                  </p>
+                </div>
+                
+                <div className="flex flex-wrap gap-2 shrink-0">
+                  <button
+                    onClick={() => {
+                      const title = manualBackupTitle.trim() || `Điểm sao lưu thủ công bởi Admin`;
+                      createSnapshot(title);
+                      setManualBackupTitle("");
+                      setSyncStatusMsg("Đã tạo điểm sao lưu thủ công thành công!");
+                    }}
+                    className="px-3.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold cursor-pointer shadow-sm transition-all flex items-center gap-1.5"
+                  >
+                    <Database className="w-3.5 h-3.5" />
+                    <span>Tạo sao lưu thủ công</span>
+                  </button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                {/* LEFT COLUMN: AUTO SNAPSHOT HISTORY TIMELINE */}
+                <div className="lg:col-span-7 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
+                      <Clock className="w-3.5 h-3.5 text-indigo-500" />
+                      Lịch sử điểm khôi phục nhanh (Snapshots)
+                    </h4>
+                    <span className="px-2 py-0.5 text-[9px] bg-indigo-50 text-indigo-600 font-bold rounded-full border border-indigo-100 font-mono">
+                      {snapshots.length}/10 Điểm lưu
+                    </span>
+                  </div>
+
+                  {snapshots.length === 0 ? (
+                    <div className="text-center py-8 px-4 rounded-xl border border-dashed border-slate-200 bg-slate-50/50 space-y-1.5">
+                      <p className="text-xs text-slate-500 font-medium">Chưa có điểm sao lưu cục bộ nào được ghi nhận.</p>
+                      <p className="text-[10px] text-slate-400">Hệ thống sẽ tự động tạo điểm lưu khi bạn thêm/sửa/xóa công việc hoặc nhân sự.</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2.5 max-h-[280px] overflow-y-auto pr-1">
+                      {snapshots.map((snap) => (
+                        <div
+                          key={snap.id}
+                          className="p-3 rounded-xl border border-slate-100 bg-slate-50 hover:bg-slate-100/70 transition-all flex items-center justify-between gap-4"
+                        >
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className="text-[10px] font-mono text-slate-400 font-bold">{snap.timestamp}</span>
+                              <span className="px-1.5 py-0.5 text-[8px] font-bold rounded bg-indigo-50 text-indigo-600 border border-indigo-100">
+                                Cục bộ
+                              </span>
+                            </div>
+                            <p className="text-xs font-semibold text-slate-700 mt-1 truncate">{snap.description}</p>
+                            <div className="flex items-center gap-3 mt-1.5 text-[10px] text-slate-500 font-mono">
+                              <span className="flex items-center gap-1">
+                                <CheckSquare className="w-3 h-3 text-slate-400" />
+                                {snap.tasksCount} công việc
+                              </span>
+                              <span className="flex items-center gap-1">
+                                <Users className="w-3 h-3 text-slate-400" />
+                                {snap.usersCount} nhân sự
+                              </span>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <button
+                              onClick={() => {
+                                setConfirmRestoreSnapshot(snap);
+                                setShowRestoreModal(true);
+                              }}
+                              className="px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 text-[10px] font-bold cursor-pointer transition-all shadow-sm"
+                              title="Khôi phục toàn bộ dữ liệu về thời điểm này"
+                            >
+                              Khôi phục
+                            </button>
+                            <button
+                              onClick={() => {
+                                const filtered = snapshots.filter((s) => s.id !== snap.id);
+                                setSnapshots(filtered);
+                                localStorage.setItem("tasktracker_backup_snapshots_v1", JSON.stringify(filtered));
+                                addSyncLog(`[Hệ thống] Đã xóa điểm khôi phục ngày ${snap.timestamp}`);
+                              }}
+                              className="p-1 rounded-lg hover:bg-red-50 text-slate-400 hover:text-red-500 transition-all cursor-pointer"
+                              title="Xóa điểm lưu này"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  <div className="flex items-center gap-2 bg-slate-50 p-3 rounded-xl border border-slate-200/60">
+                    <input
+                      type="text"
+                      value={manualBackupTitle}
+                      onChange={(e) => setManualBackupTitle(e.target.value)}
+                      placeholder="Nhập tên nhãn cho điểm sao lưu thủ công (ví dụ: Trước khi cập nhật kế hoạch giao ban)..."
+                      className="flex-1 px-3 py-1.5 rounded-lg border border-slate-200 text-xs bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    />
+                  </div>
+                </div>
+
+                {/* RIGHT COLUMN: DOWNLOAD CENTER */}
+                <div className="lg:col-span-5 space-y-4">
+                  <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
+                    <Database className="w-3.5 h-3.5 text-indigo-500" />
+                    Công cụ sao lưu & Xuất báo cáo (.JSON, .CSV)
+                  </h4>
+
+                  <div className="grid grid-cols-1 gap-3">
+                    {/* JSON Full Backup Card */}
+                    <div className="p-4 rounded-xl border border-slate-150 bg-indigo-50/20 space-y-2.5">
+                      <div>
+                        <h5 className="text-[11px] font-bold text-indigo-900 uppercase tracking-wider flex items-center gap-1.5">
+                          <Database className="w-3.5 h-3.5 text-indigo-600" />
+                          Sao lưu toàn bộ ứng dụng (.JSON)
+                        </h5>
+                        <p className="text-[10px] text-slate-500 leading-relaxed mt-0.5">
+                          Tệp chứa toàn bộ cấu trúc cơ sở dữ liệu hiện tại (nhiệm vụ, nhân sự). Tải về lưu trữ định kỳ để tránh rủi ro mất mát dữ liệu.
+                        </p>
+                      </div>
+                      
+                      <div className="flex flex-wrap gap-2 pt-1">
+                        <button
+                          onClick={handleExportLocalData}
+                          className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white border border-indigo-100 hover:bg-indigo-50 text-indigo-700 text-xs font-bold transition-all cursor-pointer shadow-sm"
+                        >
+                          <Download className="w-3.5 h-3.5 text-indigo-600" />
+                          <span>Xuất sao lưu (.JSON)</span>
+                        </button>
+                        
+                        <label className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white border border-indigo-100 hover:bg-indigo-50 text-indigo-700 text-xs font-bold transition-all cursor-pointer shadow-sm">
+                          <Upload className="w-3.5 h-3.5 text-indigo-600" />
+                          <span>Khôi phục file (.JSON)</span>
+                          <input
+                            type="file"
+                            accept=".json"
+                            onChange={handleImportLocalData}
+                            className="hidden"
+                          />
+                        </label>
+                      </div>
+                    </div>
+
+                    {/* CSV Reporting Card */}
+                    <div className="p-4 rounded-xl border border-slate-150 bg-emerald-50/10 space-y-2.5">
+                      <div>
+                        <h5 className="text-[11px] font-bold text-emerald-900 uppercase tracking-wider flex items-center gap-1.5">
+                          <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
+                          Xuất báo cáo bảng tính (.CSV Excel)
+                        </h5>
+                        <p className="text-[10px] text-slate-500 leading-relaxed mt-0.5">
+                          Xuất riêng lẻ dữ liệu ra định dạng CSV chuẩn Unicode UTF-8 (mở trực tiếp trên Microsoft Excel làm báo cáo mà không sợ lỗi tiếng Việt).
+                        </p>
+                      </div>
+
+                      <div className="flex flex-wrap gap-2 pt-1">
+                        <button
+                          onClick={handleExportTasksCSV}
+                          className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white border border-emerald-100 hover:bg-emerald-50 text-emerald-700 text-xs font-bold transition-all cursor-pointer shadow-sm"
+                        >
+                          <Download className="w-3.5 h-3.5 text-emerald-600" />
+                          <span>Tải CSV Nhiệm vụ</span>
+                        </button>
+                        
+                        <button
+                          onClick={handleExportUsersCSV}
+                          className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white border border-emerald-100 hover:bg-emerald-50 text-emerald-700 text-xs font-bold transition-all cursor-pointer shadow-sm"
+                        >
+                          <Download className="w-3.5 h-3.5 text-emerald-600" />
+                          <span>Tải CSV Nhân sự</span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
           {isLoadingData && (
             <div className="bg-white/80 rounded-xl p-3 mb-6 border border-indigo-50 flex items-center justify-center gap-2 text-xs font-medium text-indigo-600 animate-pulse">
               <Loader className="w-4 h-4 animate-spin text-indigo-600" />
@@ -2869,6 +3207,68 @@ function doGet(e) {
               onDeleteUserProfile={handleDeleteUserProfile}
               onRefreshData={handlePullFromGoogleSheets}
             />
+          )}
+
+          {/* CUSTOM CONFIRM RESTORE MODAL */}
+          {showRestoreModal && confirmRestoreSnapshot && (
+            <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+              <div className="bg-white rounded-2xl border border-indigo-100 shadow-xl max-w-md w-full p-6 animate-in zoom-in-95 duration-200">
+                <div className="flex items-start gap-3">
+                  <div className="p-3 bg-amber-50 rounded-xl text-amber-600 shrink-0">
+                    <AlertTriangle className="w-6 h-6" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <h4 className="font-bold text-slate-800 text-sm uppercase tracking-wide">
+                      XÁC NHẬN KHÔI PHỤC HỆ THỐNG
+                    </h4>
+                    <p className="text-xs text-slate-500 mt-1 leading-relaxed">
+                      Bạn đang chuẩn bị khôi phục toàn bộ dữ liệu hệ thống về thời điểm:
+                    </p>
+                    <div className="mt-2.5 p-3 rounded-xl bg-slate-50 border border-slate-150 font-mono text-[11px] text-slate-600 space-y-1">
+                      <p>• <strong>Thời gian:</strong> {confirmRestoreSnapshot.timestamp}</p>
+                      <p>• <strong>Lý do lưu:</strong> {confirmRestoreSnapshot.description}</p>
+                      <p>• <strong>Số công việc:</strong> {confirmRestoreSnapshot.tasksCount} mục</p>
+                      <p>• <strong>Số nhân sự:</strong> {confirmRestoreSnapshot.usersCount} tài khoản</p>
+                    </div>
+                    <div className="mt-3 bg-red-50 border border-red-100 rounded-xl p-3 text-[10px] text-red-700 leading-normal">
+                      <strong>CẢNH BÁO QUAN TRỌNG:</strong> Hành động này sẽ ghi đè và thay thế hoàn toàn toàn bộ dữ liệu hiện tại trên máy của bạn bằng dữ liệu từ điểm sao lưu đã chọn.
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mt-6 flex items-center justify-end gap-2.5">
+                  <button
+                    onClick={() => {
+                      setShowRestoreModal(false);
+                      setConfirmRestoreSnapshot(null);
+                    }}
+                    className="px-4 py-2 rounded-xl border border-slate-200 hover:bg-slate-50 text-slate-600 text-xs font-semibold cursor-pointer transition-all"
+                  >
+                    Hủy bỏ
+                  </button>
+                  <button
+                    onClick={() => {
+                      try {
+                        localStorage.setItem(LOCAL_TASKS_KEY, JSON.stringify(confirmRestoreSnapshot.tasks));
+                        localStorage.setItem(LOCAL_USERS_KEY, JSON.stringify(confirmRestoreSnapshot.users));
+                        setTasks(confirmRestoreSnapshot.tasks);
+                        setUsersList(confirmRestoreSnapshot.users);
+                        addSyncLog(`[Hệ thống] Đã phục hồi dữ liệu thành công từ điểm sao lưu: "${confirmRestoreSnapshot.description}" (${confirmRestoreSnapshot.timestamp})`);
+                        setSyncStatusMsg("Phục hồi dữ liệu hệ thống thành công!");
+                      } catch (err: any) {
+                        console.error("Lỗi khi khôi phục:", err);
+                        addSyncLog(`[Lỗi] Phục hồi dữ liệu thất bại: ${err.message}`);
+                      }
+                      setShowRestoreModal(false);
+                      setConfirmRestoreSnapshot(null);
+                    }}
+                    className="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-bold cursor-pointer transition-all shadow-sm"
+                  >
+                    Đồng ý Khôi phục
+                  </button>
+                </div>
+              </div>
+            </div>
           )}
         </div>
       </main>
