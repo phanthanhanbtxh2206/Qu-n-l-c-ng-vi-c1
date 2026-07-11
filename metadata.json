@@ -1,0 +1,6 @@
+{
+  "name": "Theo Dõi Tiến Độ Công Việc",
+  "description": "Hệ thống quản lý, theo dõi tiến độ công việc tại Trung tâm Bảo trợ xã hội Đà Nẵng, tự động đồng bộ hóa thời gian thực với Google Sheets, hỗ trợ ngày bắt đầu và phân quyền 5 cấp độ chuyên nghiệp.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
