@@ -144,6 +144,67 @@ export default function App() {
   const [confirmRestoreSnapshot, setConfirmRestoreSnapshot] = useState<Snapshot | null>(null);
   const [showRestoreModal, setShowRestoreModal] = useState(false);
 
+  // GitHub Sync States
+  const [githubToken, setGithubToken] = useState(() => localStorage.getItem("admin_github_token") || "");
+  const [githubRepo, setGithubRepo] = useState(() => localStorage.getItem("admin_github_repo") || "");
+  const [githubBranch, setGithubBranch] = useState(() => localStorage.getItem("admin_github_branch") || "main");
+  const [githubCommitMsg, setGithubCommitMsg] = useState("");
+  const [isSyncingToGithub, setIsSyncingToGithub] = useState(false);
+  const [githubSyncError, setGithubSyncError] = useState("");
+  const [githubSyncSuccess, setGithubSyncSuccess] = useState("");
+
+  const handleSyncToGithub = async () => {
+    if (!githubToken.trim()) {
+      setGithubSyncError("Vui lòng cung cấp GitHub Personal Access Token (PAT Classic).");
+      return;
+    }
+    if (!githubRepo.trim()) {
+      setGithubSyncError("Vui lòng nhập tên Kho lưu trữ (ví dụ: tai-khoan/ten-repo).");
+      return;
+    }
+
+    setIsSyncingToGithub(true);
+    setGithubSyncError("");
+    setGithubSyncSuccess("");
+    addSyncLog("[GitHub] Bắt đầu đồng bộ toàn bộ mã nguồn lên GitHub...");
+
+    try {
+      const response = await fetch("/api/github/sync", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          githubToken: githubToken.trim(),
+          repo: githubRepo.trim(),
+          branch: githubBranch.trim(),
+          commitMessage: githubCommitMsg.trim() || `Đồng bộ hệ thống tự động: ${new Date().toLocaleString("vi-VN")}`,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Có lỗi xảy ra trong quá trình đồng bộ lên GitHub.");
+      }
+
+      // Save settings on success
+      localStorage.setItem("admin_github_token", githubToken.trim());
+      localStorage.setItem("admin_github_repo", githubRepo.trim());
+      localStorage.setItem("admin_github_branch", githubBranch.trim());
+
+      setGithubSyncSuccess(`Đồng bộ thành công! Mã hash Commit: ${data.commitSha.substring(0, 7)}`);
+      setGithubCommitMsg("");
+      addSyncLog(`[GitHub] Đồng bộ thành công lên GitHub! Repo: ${githubRepo.trim()} [Chi tiết: ${data.repoUrl}]`);
+    } catch (err: any) {
+      console.error(err);
+      setGithubSyncError(err.message || "Không thể kết nối đến máy chủ đồng bộ.");
+      addSyncLog(`[Lỗi GitHub] Đồng bộ thất bại: ${err.message}`);
+    } finally {
+      setIsSyncingToGithub(false);
+    }
+  };
+
   const createSnapshot = (description: string, customTasks?: Task[], customUsers?: UserProfile[]) => {
     try {
       const tList = customTasks || JSON.parse(localStorage.getItem(LOCAL_TASKS_KEY) || "[]");
@@ -3168,6 +3229,121 @@ function doGet(e) {
                         >
                           <Download className="w-3.5 h-3.5 text-emerald-600" />
                           <span>Tải CSV Nhân sự</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* GitHub Synchronization Card */}
+                    <div className="p-4 rounded-xl border border-slate-150 bg-slate-50 space-y-3">
+                      <div>
+                        <h5 className="text-[11px] font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+                          <svg className="w-3.5 h-3.5 text-slate-700" viewBox="0 0 24 24" fill="currentColor">
+                            <path fillRule="evenodd" clipRule="evenodd" d="M12 2C6.477 2 2 6.477 2 12c0 4.42 2.865 8.166 6.839 9.489.5.092.682-.217.682-.482 0-.237-.008-.866-.013-1.7-2.782.603-3.369-1.34-3.369-1.34-.454-1.156-1.11-1.464-1.11-1.464-.908-.62.069-.608.069-.608 1.003.07 1.531 1.03 1.531 1.03.892 1.529 2.341 1.087 2.91.831.092-.646.35-1.086.636-1.336-2.22-.253-4.555-1.11-4.555-4.943 0-1.091.39-1.984 1.029-2.683-.103-.253-.446-1.27.098-2.647 0 0 .84-.269 2.75 1.025A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.294 2.747-1.025 2.747-1.025.546 1.377.203 2.394.1 2.647.64.699 1.028 1.592 1.028 2.683 0 3.842-2.339 4.687-4.566 4.935.359.309.678.919.678 1.852 0 1.336-.012 2.415-.012 2.743 0 .267.18.579.688.481C19.137 20.164 22 16.418 22 12c0-5.523-4.477-10-10-10z" />
+                          </svg>
+                          Đồng bộ mã nguồn lên GitHub
+                        </h5>
+                        <p className="text-[10px] text-slate-500 leading-relaxed mt-0.5">
+                          Đẩy trực tiếp toàn bộ mã nguồn của dự án hiện tại lên kho lưu trữ GitHub của bạn một cách nhanh chóng và an toàn.
+                        </p>
+                      </div>
+
+                      {/* Guide for Non-Programmers */}
+                      <details className="group border border-slate-200 rounded-lg bg-white overflow-hidden">
+                        <summary className="px-2.5 py-1.5 text-[10px] font-bold text-slate-600 hover:text-slate-800 cursor-pointer select-none flex items-center justify-between">
+                          <span>🔍 Hướng dẫn lấy Token GitHub (cho người mới)</span>
+                          <span className="text-[9px] text-slate-400 group-open:rotate-180 transition-transform">▼</span>
+                        </summary>
+                        <div className="p-2.5 border-t border-slate-100 text-[10px] text-slate-500 space-y-1.5 bg-slate-50/50">
+                          <p>1. Truy cập trang <a href="https://github.com/settings/tokens" target="_blank" rel="noopener noreferrer" className="text-indigo-600 font-semibold hover:underline">Cấu hình Token GitHub</a></p>
+                          <p>2. Chọn <strong>Generate new token</strong> ➜ <strong>Generate new token (classic)</strong>.</p>
+                          <p>3. Điền ghi chú, tích chọn quyền <strong>repo</strong> (quyền truy cập và quản trị kho lưu trữ) và cuộn xuống dưới bấm <strong>Generate token</strong>.</p>
+                          <p>4. Sao chép chuỗi mã token nhận được (bắt đầu bằng <code className="font-mono bg-slate-100 px-1 py-0.5 rounded text-slate-700">ghp_</code>) dán vào ô bên dưới.</p>
+                        </div>
+                      </details>
+
+                      <div className="space-y-2 text-[11px]">
+                        <div>
+                          <label className="block text-slate-600 font-semibold mb-1">GitHub Personal Access Token (PAT):</label>
+                          <div className="relative">
+                            <input
+                              type="password"
+                              value={githubToken}
+                              onChange={(e) => setGithubToken(e.target.value)}
+                              placeholder="Dán token ghp_... vào đây"
+                              className="w-full pl-2.5 pr-8 py-1.5 rounded-lg border border-slate-200 bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono text-xs"
+                            />
+                            <span className="absolute right-2.5 top-1.5 text-slate-400 animate-pulse" title="Được mã hóa và lưu trữ an toàn trong trình duyệt của bạn">
+                              <Lock className="w-3.5 h-3.5" />
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          <div>
+                            <label className="block text-slate-600 font-semibold mb-1">Tên Kho Lưu Trữ (Repo URL / Path):</label>
+                            <input
+                              type="text"
+                              value={githubRepo}
+                              onChange={(e) => setGithubRepo(e.target.value)}
+                              placeholder="ví dụ: ten-tai-khoan/ten-kho-luu-tru"
+                              className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono text-xs"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-slate-600 font-semibold mb-1">Nhánh đồng bộ (Branch):</label>
+                            <input
+                              type="text"
+                              value={githubBranch}
+                              onChange={(e) => setGithubBranch(e.target.value)}
+                              placeholder="main"
+                              className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono text-xs"
+                            />
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className="block text-slate-600 font-semibold mb-1">Thông điệp cập nhật (Commit Message):</label>
+                          <input
+                            type="text"
+                            value={githubCommitMsg}
+                            onChange={(e) => setGithubCommitMsg(e.target.value)}
+                            placeholder="ví dụ: Cập nhật tính năng từ AI Studio"
+                            className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500 text-xs"
+                          />
+                        </div>
+
+                        {githubSyncError && (
+                          <div className="p-2 rounded-lg bg-red-50 text-red-700 border border-red-100 flex items-start gap-1.5 leading-relaxed text-[10px]">
+                            <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                            <span>{githubSyncError}</span>
+                          </div>
+                        )}
+
+                        {githubSyncSuccess && (
+                          <div className="p-2 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-100 flex items-start gap-1.5 leading-relaxed text-[10px]">
+                            <CheckCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                            <span>{githubSyncSuccess}</span>
+                          </div>
+                        )}
+
+                        <button
+                          onClick={handleSyncToGithub}
+                          disabled={isSyncingToGithub}
+                          className="w-full py-2 rounded-xl bg-slate-800 hover:bg-slate-900 text-white font-bold transition-all flex items-center justify-center gap-1.5 disabled:opacity-50 cursor-pointer shadow-sm text-xs mt-1"
+                        >
+                          {isSyncingToGithub ? (
+                            <>
+                              <Loader className="w-3.5 h-3.5 animate-spin text-white" />
+                              <span>Đang đồng bộ lên GitHub...</span>
+                            </>
+                          ) : (
+                            <>
+                              <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor">
+                                <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
+                              </svg>
+                              <span>Bắt đầu đồng bộ lên GitHub</span>
+                            </>
+                          )}
                         </button>
                       </div>
                     </div>
